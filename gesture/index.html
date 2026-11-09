@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>GestureSynth Cam 鏡頭手勢合成器</title>
+<style>
+  :root{--bg:#07070f;--panel:rgba(18,18,32,.92);--fg:#e9e9f5;--dim:#8a8aa8;--acc:#7cf3d0;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC",sans-serif;
+    -webkit-user-select:none;user-select:none;overscroll-behavior:none}
+  video{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;z-index:5;display:flex;align-items:center;gap:10px;
+    padding:calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 12px) 8px calc(env(safe-area-inset-left) + 14px);pointer-events:none}
+  #bar .title{font-weight:700;letter-spacing:.06em;font-size:15px;opacity:.8}
+  #bar .info{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+  #bar .sp{flex:1}
+  .btn{pointer-events:auto;border:1px solid rgba(255,255,255,.14);background:rgba(20,20,36,.7);color:var(--fg);
+    border-radius:12px;padding:10px 14px;font-size:15px;font-family:inherit}
+  .btn.on{background:var(--acc);color:#04211a;border-color:var(--acc)}
+  #panel{position:fixed;z-index:6;top:calc(env(safe-area-inset-top) + 58px);right:calc(env(safe-area-inset-right) + 12px);
+    width:min(380px,calc(100vw - 24px));max-height:calc(100vh - 80px);overflow:auto;background:var(--panel);
+    border:1px solid rgba(255,255,255,.1);border-radius:18px;padding:16px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    transition:transform .18s,opacity .18s;transform-origin:top right}
+  #panel.hide{transform:scale(.92);opacity:0;pointer-events:none}
+  .row{margin-bottom:14px}
+  .row label{display:flex;justify-content:space-between;font-size:13px;color:var(--dim);margin-bottom:6px}
+  .seg{display:flex;flex-wrap:wrap;gap:6px}
+  .seg button{flex:1 1 auto;min-width:56px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:var(--fg);
+    border-radius:10px;padding:9px 8px;font-size:14px;font-family:inherit}
+  .seg button.on{background:var(--acc);color:#04211a;border-color:var(--acc);font-weight:600}
+  input[type=range]{width:100%;height:32px;accent-color:var(--acc)}
+  #start{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:radial-gradient(circle at 50% 40%,#16163a 0%,#07070f 70%);text-align:center;padding:24px;overflow:auto}
+  #start h1{font-size:clamp(32px,7vw,60px);margin:0 0 6px;
+    background:linear-gradient(90deg,#7cf3d0,#8aa2ff,#ff8ad8);-webkit-background-clip:text;background-clip:text;color:transparent}
+  #start p{color:var(--dim);margin:0 0 26px;font-size:16px}
+  .go{font-size:20px;padding:18px 40px;border-radius:999px;border:none;background:var(--acc);color:#04211a;font-weight:700;font-family:inherit}
+  .go:disabled{opacity:.5}
+  .howto{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;max-width:720px;width:100%;margin-top:30px}
+  .howto div{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px;font-size:14px}
+  .howto b{display:block;font-size:24px;margin-bottom:4px}
+  #msg{margin-top:18px;color:#ffb3c7;font-size:14px;min-height:20px;max-width:560px}
+  .note{font-size:12px;color:#6b6b88;margin-top:18px}
+</style>
+</head>
+<body>
+<video id="vid" playsinline muted autoplay></video>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <span class="title">GESTURESYNTH CAM</span>
+  <span class="info" id="info"></span>
+  <span class="sp"></span>
+  <button class="btn" id="camBtn">🎥 鏡頭畫面</button>
+  <button class="btn" id="cfgBtn">⚙ 設定</button>
+</div>
+
+<div id="panel" class="hide">
+  <div class="row"><label>音階</label><div class="seg" id="scaleSeg"></div></div>
+  <div class="row"><label>主音</label><div class="seg" id="rootSeg"></div></div>
+  <div class="row"><label>波形</label><div class="seg" id="waveSeg"></div></div>
+  <div class="row"><label>音域</label><div class="seg" id="octSeg"></div></div>
+  <div class="row"><label>每隻手發聲</label><div class="seg" id="chordSeg"></div></div>
+  <div class="row"><label>反應靈敏度 <span id="smoothV"></span></label><input type="range" id="smooth" min="0" max="100" value="55"></div>
+  <div class="row"><label>殘響 Reverb <span id="revV"></span></label><input type="range" id="rev" min="0" max="100" value="45"></div>
+  <div class="row"><label>回音 Delay <span id="dlyV"></span></label><input type="range" id="dly" min="0" max="100" value="25"></div>
+  <div class="row"><label>音量 <span id="volV"></span></label><input type="range" id="vol" min="0" max="100" value="80"></div>
+</div>
+
+<div id="start">
+  <h1>GestureSynth Cam</h1>
+  <p>對著鏡頭揮手就能演奏</p>
+  <button class="go" id="goBtn">▶ 開啟鏡頭開始</button>
+  <div id="msg"></div>
+  <div class="howto">
+    <div><b>↔</b>手左右移：音高</div>
+    <div><b>↕</b>手上下移：音色（上亮下暗）</div>
+    <div><b>🖐</b>張開手：出聲／越開越大聲</div>
+    <div><b>✊</b>握拳：靜音</div>
+    <div><b>🤏</b>捏指（拇指＋食指）：顫音</div>
+    <div><b>🙌</b>兩隻手：兩個聲部</div>
+  </div>
+  <div class="note">影像只在你的裝置上辨識，不會上傳。光線充足、手離鏡頭約一個手臂距離效果最好。<br>iPad 沒聲音的話，請確認靜音開關已關、音量已調高。</div>
+</div>
+
+<script type="module">
+import { FilesetResolver, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+
+// ---------- settings ----------
+const SCALES = [
+  {n:'大調五聲', s:[0,2,4,7,9]},
+  {n:'小調五聲', s:[0,3,5,7,10]},
+  {n:'大調',     s:[0,2,4,5,7,9,11]},
+  {n:'小調',     s:[0,2,3,5,7,8,10]},
+  {n:'多利安',   s:[0,2,3,5,7,9,10]},
+  {n:'日式都節', s:[0,1,5,7,8]},
+  {n:'半音',     s:[0,1,2,3,4,5,6,7,8,9,10,11]},
+  {n:'自由滑音', s:null},
+];
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const WAVES = [{k:'sine',n:'正弦'},{k:'triangle',n:'三角'},{k:'sawtooth',n:'鋸齒'},{k:'square',n:'方波'}];
+const CHORDS = [{k:1,n:'單音'},{k:2,n:'五度'},{k:3,n:'三和弦'}];
+const S = {scale:0, root:0, wave:'triangle', oct:2, chord:1, smooth:.55, rev:.45, dly:.25, vol:.8, cam:true};
+try { Object.assign(S, JSON.parse(localStorage.getItem('gsynthcam')||'{}')); } catch(e){}
+const save = () => { try { localStorage.setItem('gsynthcam', JSON.stringify(S)); } catch(e){} };
+
+// ---------- audio ----------
+let ctx=null, bus, out, dlySend, revSend;
+function initAudio(){
+  if (ctx){ if (ctx.state!=='running') ctx.resume(); return; }
+  try { if (navigator.audioSession) navigator.audioSession.type='playback'; } catch(e){}
+  ctx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+  bus = ctx.createGain();
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value=-14; comp.knee.value=12; comp.ratio.value=4;
+  out = ctx.createGain(); comp.connect(out); out.connect(ctx.destination); bus.connect(comp);
+  dlySend = ctx.createGain(); const delay = ctx.createDelay(2); delay.delayTime.value=.33;
+  const fb = ctx.createGain(); fb.gain.value=.42; const tone = ctx.createBiquadFilter(); tone.type='lowpass'; tone.frequency.value=3200;
+  bus.connect(dlySend); dlySend.connect(delay); delay.connect(tone); tone.connect(fb); fb.connect(delay); tone.connect(comp);
+  revSend = ctx.createGain(); const conv = ctx.createConvolver();
+  const len = Math.floor(ctx.sampleRate*3.2), b = ctx.createBuffer(2,len,ctx.sampleRate);
+  for (let c=0;c<2;c++){ const d=b.getChannelData(c); for (let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2.6); }
+  conv.buffer=b; bus.connect(revSend); revSend.connect(conv); conv.connect(comp);
+  applyMix(); ctx.resume();
+}
+function applyMix(){ if(!ctx) return; const t=ctx.currentTime;
+  out.gain.setTargetAtTime(S.vol*1.1,t,.03); revSend.gain.setTargetAtTime(S.rev*1.4,t,.03); dlySend.gain.setTargetAtTime(S.dly*.9,t,.03); }
+const mtof = m => 440*Math.pow(2,(m-69)/12);
+
+// ---------- pitch mapping ----------
+const BASE = 48;
+const sc = () => SCALES[S.scale];
+function noteAt(k){ const s=sc().s, L=s.length, o=Math.floor(k/L), d=((k%L)+L)%L; return BASE+S.root+12*o+s[d]; }
+const stepCount = () => sc().s ? sc().s.length*S.oct+1 : 0;
+function xToPitch(u){ u=Math.min(Math.max(u,0),.9999);
+  if (!sc().s) return {midi:BASE+S.root+u*12*S.oct, step:null};
+  const k=Math.floor(u*stepCount()); return {midi:noteAt(k), step:k}; }
+function chordMidis(p){
+  const out=[p.midi], L=sc().s?sc().s.length:0, free=p.step==null||L===12;
+  if (S.chord>=2) out.push(free?p.midi+7:noteAt(p.step+(L>=7?4:3)));
+  if (S.chord>=3) out.push(free?p.midi+4:noteAt(p.step+(L>=7?2:1)));
+  return out;
+}
+const yToCut = v => 160*Math.pow(2,(1-Math.min(Math.max(v,0),1))*6.4);
+
+class Voice{
+  constructor(p){
+    const t=ctx.currentTime;
+    this.filter=ctx.createBiquadFilter(); this.filter.type='lowpass'; this.filter.Q.value=3;
+    this.vca=ctx.createGain(); this.vca.gain.value=0; this.filter.connect(this.vca); this.vca.connect(bus);
+    this.lfo=ctx.createOscillator(); this.lfo.frequency.value=5.8; this.lfoAmt=ctx.createGain(); this.lfoAmt.gain.value=0; this.lfo.connect(this.lfoAmt);
+    const ms=chordMidis(p); this.oscs=[];
+    ms.forEach((m,i)=>[-7,7].forEach(det=>{
+      const o=ctx.createOscillator(); o.type=S.wave; o.frequency.value=mtof(m); o.detune.value=det;
+      this.lfoAmt.connect(o.detune);
+      const g=ctx.createGain(); g.gain.value=(i?.7:1)/(ms.length*2); o.connect(g); g.connect(this.filter); o.start(t); this.oscs.push({o,i});
+    }));
+    this.sub=ctx.createOscillator(); this.sub.frequency.value=mtof(ms[0]-12);
+    const sg=ctx.createGain(); sg.gain.value=S.wave==='sine'?0:.15; this.sub.connect(sg); sg.connect(this.vca); this.sub.start(t); this.lfo.start(t);
+  }
+  set(p, cutoff, vol, vib){
+    const t=ctx.currentTime, ms=chordMidis(p);
+    this.oscs.forEach(({o,i})=>o.frequency.setTargetAtTime(mtof(ms[i]),t,.03));
+    this.sub.frequency.setTargetAtTime(mtof(ms[0]-12),t,.03);
+    this.filter.frequency.setTargetAtTime(cutoff,t,.04);
+    this.vca.gain.setTargetAtTime(.34*vol,t,.05);
+    this.lfoAmt.gain.setTargetAtTime(vib*55,t,.08);
+  }
+  release(){
+    const t=ctx.currentTime; this.vca.gain.cancelScheduledValues(t); this.vca.gain.setTargetAtTime(0,t,.15);
+    const end=t+1; this.oscs.forEach(({o})=>o.stop(end)); this.sub.stop(end); this.lfo.stop(end);
+    setTimeout(()=>{ try{this.vca.disconnect();}catch(e){} },1300);
+  }
+}
+
+// ---------- hand state ----------
+// key: 'Left' / 'Right' (as seen by the model) -> {sx,sy,open,pinch,voice,lastSeen,pts}
+const hands = new Map();
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+function analyse(lm){
+  const palm = dist(lm[0],lm[9]) || .1;
+  const tips=[8,12,16,20], open = tips.reduce((s,i)=>s+dist(lm[i],lm[0]),0)/4/palm;   // fist ~1.0, open ~2.0
+  const pinch = dist(lm[4],lm[8])/palm;                                               // pinched < .35
+  const cx = (lm[0].x+lm[5].x+lm[9].x+lm[13].x+lm[17].x)/5, cy=(lm[0].y+lm[5].y+lm[9].y+lm[13].y+lm[17].y)/5;
+  return {cx,cy,open,pinch};
+}
+
+// ---------- canvas / mapping ----------
+const vid=document.getElementById('vid'), cv=document.getElementById('cv'), g=cv.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){ DPR=Math.min(devicePixelRatio||1,2); W=innerWidth; H=innerHeight; cv.width=W*DPR; cv.height=H*DPR; g.setTransform(DPR,0,0,DPR,0,0); }
+addEventListener('resize',resize); resize();
+function coverRect(){ const vw=vid.videoWidth||640, vh=vid.videoHeight||480, s=Math.max(W/vw,H/vh); const dw=vw*s, dh=vh*s; return {ox:(W-dw)/2, oy:(H-dh)/2, dw, dh}; }
+const toScreen = (p,r) => ({x: r.ox + (1-p.x)*r.dw, y: r.oy + p.y*r.dh}); // mirrored
+const hueOf = m => (((m%12)+12)%12)/12*360+170;
+const CONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const parts=[];
+
+// ---------- tracking ----------
+let landmarker=null, lastVT=-1, running=false;
+async function setup(){
+  const msg=document.getElementById('msg'), btn=document.getElementById('goBtn');
+  btn.disabled=true; msg.style.color='#8a8aa8';
+  initAudio();
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia){
+    msg.style.color='#ffb3c7'; msg.textContent='這個瀏覽器無法開鏡頭：網頁必須用 https:// 開啟（例如 GitHub Pages），不能直接開檔案。'; btn.disabled=false; return;
+  }
+  try{
+    msg.textContent='正在開啟鏡頭…';
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    vid.srcObject=stream; await vid.play();
+  }catch(e){ msg.style.color='#ffb3c7'; msg.textContent='鏡頭沒有開成功：請在瀏覽器設定允許這個網站使用相機，再重新整理。（'+e.name+'）'; btn.disabled=false; return; }
+  try{
+    msg.textContent='正在載入手部辨識模型（第一次約 5–10 秒）…';
+    const fs=await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    const opts=d=>({baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',delegate:d},
+      runningMode:'VIDEO',numHands:2,minHandDetectionConfidence:.6,minHandPresenceConfidence:.5,minTrackingConfidence:.5});
+    try{ landmarker=await HandLandmarker.createFromOptions(fs,opts('GPU')); }
+    catch(e){ landmarker=await HandLandmarker.createFromOptions(fs,opts('CPU')); }
+  }catch(e){ msg.style.color='#ffb3c7'; msg.textContent='手部辨識模型載入失敗，請確認網路連線後重新整理。'; btn.disabled=false; return; }
+  document.getElementById('start').style.display='none'; running=true;
+}
+
+function frame(){
+  requestAnimationFrame(frame);
+  g.fillStyle='#07070f'; g.fillRect(0,0,W,H);
+  const r=coverRect();
+  if (running && vid.readyState>=2){
+    if (S.cam){ g.save(); g.globalAlpha=.32; g.translate(W,0); g.scale(-1,1);
+      g.drawImage(vid, W-r.ox-r.dw, r.oy, r.dw, r.dh); g.restore(); }
+    if (vid.currentTime!==lastVT && landmarker){
+      lastVT=vid.currentTime;
+      let res; try{ res=landmarker.detectForVideo(vid, performance.now()); }catch(e){ res=null; }
+      if (res) ingest(res, r);
+    }
+  }
+  drawGrid();
+  // drop lost hands
+  const now=performance.now();
+  for (const [k,h] of hands) if (now-h.lastSeen>220){ if(h.voice) h.voice.release(); hands.delete(k); }
+  // particles
+  g.globalCompositeOperation='lighter';
+  for (let i=parts.length-1;i>=0;i--){ const p=parts[i]; p.l-=.02; p.x+=p.vx; p.y+=p.vy; p.vy-=.02;
+    if(p.l<=0){parts.splice(i,1);continue;} g.fillStyle=`hsla(${p.h},95%,62%,${p.l*.5})`; g.beginPath(); g.arc(p.x,p.y,p.r*p.l+1,0,7); g.fill(); }
+  for (const h of hands.values()) drawHand(h);
+  g.globalCompositeOperation='source-over';
+  updInfo();
+}
+
+function ingest(res, r){
+  const seen=new Set(), k=1-S.smooth*.85; // smoothing factor
+  (res.landmarks||[]).forEach((lm,i)=>{
+    let key=res.handedness?.[i]?.[0]?.categoryName || ('h'+i);
+    if (seen.has(key)) key=key+'2'; seen.add(key);
+    const a=analyse(lm), sp=toScreen({x:a.cx,y:a.cy},r);
+    let h=hands.get(key);
+    if (!h){ h={sx:sp.x,sy:sp.y,open:a.open,pinch:a.pinch,voice:null}; hands.set(key,h); }
+    h.sx+=(sp.x-h.sx)*k; h.sy+=(sp.y-h.sy)*k; h.open+=(a.open-h.open)*k; h.pinch+=(a.pinch-h.pinch)*k;
+    h.lastSeen=performance.now(); h.pts=lm.map(p=>toScreen(p,r));
+    h.p=xToPitch(h.sx/W);
+    h.vol=Math.min(Math.max((h.open-1.2)/.65,0),1);
+    h.vib=Math.min(Math.max((.55-h.pinch)/.35,0),1);
+    h.cut=yToCut(h.sy/H); h.hue=hueOf(h.p.midi);
+    if (!ctx) return;
+    if (!h.voice) h.voice=new Voice(h.p);
+    h.voice.set(h.p,h.cut,h.vol,h.vib);
+  });
+}
+
+function drawGrid(){
+  const active=new Set(); for (const h of hands.values()) if(h.p&&h.p.step!=null&&h.vol>.05) active.add(h.p.step);
+  g.textAlign='center'; g.font='13px -apple-system,sans-serif';
+  if (sc().s){
+    const n=stepCount(), cw=W/n;
+    for (let k=0;k<n;k++){
+      const m=noteAt(k), pc=((m%12)+12)%12, root=pc===S.root, on=active.has(k);
+      if (on){ g.fillStyle=`hsla(${hueOf(m)},90%,60%,.2)`; g.fillRect(k*cw,0,cw,H); }
+      g.fillStyle=root?'rgba(124,243,208,.28)':'rgba(255,255,255,.07)'; g.fillRect(k*cw,0,1,H);
+      if (cw>18){ g.fillStyle=on?'#fff':root?'rgba(124,243,208,.85)':'rgba(255,255,255,.35)'; g.fillText(NOTE_NAMES[pc],k*cw+cw/2,H-16); }
+    }
+  } else {
+    for (let o=0;o<=S.oct;o++){ const x=o/S.oct*W; g.fillStyle='rgba(124,243,208,.25)'; g.fillRect(x,0,1,H);
+      if(o<S.oct){ g.fillStyle='rgba(124,243,208,.8)'; g.fillText(NOTE_NAMES[S.root]+(3+o),x+16,H-16);} }
+  }
+}
+
+function drawHand(h){
+  if (!h.pts) return;
+  const a=.25+.75*(h.vol||0), hue=h.hue||180;
+  g.strokeStyle=`hsla(${hue},90%,65%,${.35+.5*a})`; g.lineWidth=2.5; g.beginPath();
+  CONN.forEach(([i,j])=>{ g.moveTo(h.pts[i].x,h.pts[i].y); g.lineTo(h.pts[j].x,h.pts[j].y); }); g.stroke();
+  g.fillStyle=`hsla(${hue},100%,80%,${.5+.5*a})`;
+  h.pts.forEach(p=>{ g.beginPath(); g.arc(p.x,p.y,3.2,0,7); g.fill(); });
+  // orb at palm center
+  const rr=20+70*(h.vol||0);
+  const rg=g.createRadialGradient(h.sx,h.sy,0,h.sx,h.sy,rr*1.8);
+  rg.addColorStop(0,`hsla(${hue},100%,75%,${.85*a})`); rg.addColorStop(.4,`hsla(${hue},95%,60%,${.3*a})`); rg.addColorStop(1,'hsla(0,0%,0%,0)');
+  g.fillStyle=rg; g.beginPath(); g.arc(h.sx,h.sy,rr*1.8,0,7); g.fill();
+  if ((h.vol||0)>.1) for (let i=0;i<2;i++) parts.push({x:h.sx,y:h.sy,vx:(Math.random()-.5)*2,vy:(Math.random()-.5)*2,l:1,r:3+Math.random()*6*h.vol,h:hue});
+  if (h.vib>.3){ g.strokeStyle=`hsla(${hue},100%,85%,${h.vib})`; g.lineWidth=2; g.beginPath(); g.arc(h.pts[4].x/2+h.pts[8].x/2,h.pts[4].y/2+h.pts[8].y/2,10+Math.sin(performance.now()/60)*4,0,7); g.stroke(); }
+  if (parts.length>800) parts.splice(0,parts.length-800);
+}
+
+const info=document.getElementById('info');
+function updInfo(){
+  const hs=[...hands.values()].filter(h=>h.p);
+  if (!hs.length){ info.textContent=running?`${NOTE_NAMES[S.root]} ${sc().n} · 舉起手來`:''; return; }
+  info.textContent=hs.map(h=>{ const m=Math.round(h.p.midi),pc=((m%12)+12)%12; return `${NOTE_NAMES[pc]}${Math.floor(m/12)-1} ${Math.round(h.vol*100)}%`; }).join('　');
+}
+requestAnimationFrame(frame);
+
+// ---------- UI ----------
+const $=id=>document.getElementById(id);
+function resetVoices(){ for (const h of hands.values()){ if(h.voice){h.voice.release(); h.voice=null;} } }
+function seg(id,items,get,set){ const el=$(id); items.forEach((it,i)=>{ const b=document.createElement('button'); b.textContent=it.n;
+  b.onclick=()=>{ set(it,i); save(); resetVoices(); render(); }; el.appendChild(b); it._b=b; });
+  return ()=>items.forEach((it,i)=>it._b.classList.toggle('on',get(it,i))); }
+const renders=[
+  seg('scaleSeg',SCALES,(it,i)=>S.scale===i,(it,i)=>S.scale=i),
+  seg('rootSeg',NOTE_NAMES.map((n,i)=>({n,i})),it=>S.root===it.i,it=>S.root=it.i),
+  seg('waveSeg',WAVES,it=>S.wave===it.k,it=>S.wave=it.k),
+  seg('octSeg',[1,2,3].map(v=>({n:v+' 個八度',v})),it=>S.oct===it.v,it=>S.oct=it.v),
+  seg('chordSeg',CHORDS,it=>S.chord===it.k,it=>S.chord=it.k),
+];
+function slider(id,key,fmt){ const el=$(id),lab=$(id+'V'); el.value=Math.round(S[key]*100);
+  const u=()=>{ S[key]=el.value/100; lab.textContent=fmt(S[key]); applyMix(); save(); }; el.addEventListener('input',u); u(); }
+slider('smooth','smooth',v=>v<.3?'靈敏':v<.7?'平衡':'穩定');
+slider('rev','rev',v=>Math.round(v*100)+'%');
+slider('dly','dly',v=>Math.round(v*100)+'%');
+slider('vol','vol',v=>Math.round(v*100)+'%');
+function render(){ renders.forEach(r=>r()); $('camBtn').classList.toggle('on',S.cam); }
+render();
+$('cfgBtn').onclick=()=>{ initAudio(); $('panel').classList.toggle('hide'); };
+$('camBtn').onclick=()=>{ S.cam=!S.cam; save(); render(); };
+cv.addEventListener('pointerdown',()=>{ initAudio(); $('panel').classList.add('hide'); });
+$('goBtn').onclick=setup;
+document.addEventListener('visibilitychange',()=>{ if(document.hidden){ resetVoices(); if(ctx) ctx.suspend(); } else if(ctx) ctx.resume(); });
+</script>
+</body>
+</html>
